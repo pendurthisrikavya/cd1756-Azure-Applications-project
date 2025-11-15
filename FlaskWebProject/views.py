@@ -2,6 +2,7 @@
 Routes and views for the flask application.
 """
 
+import logging
 from flask import render_template, flash, redirect, request, session, url_for
 from werkzeug.urls import url_parse
 from datetime import datetime
@@ -12,6 +13,9 @@ from flask_login import current_user, login_user, logout_user, login_required
 from config import Config
 import uuid
 import msal
+
+# ensure INFO messages are emitted to your app logger (so they show in Log Stream)
+app.logger.setLevel(logging.INFO)
 
 # BLOB URL
 imageSourceUrl = (
@@ -114,32 +118,53 @@ def login():
 # --------------------------
 @app.route(Config.REDIRECT_PATH)
 def authorized():
-    if request.args.get("state") != session.get("state"):
+    # Basic sanity check (don't log the auth code)
+    state_matches = (request.args.get("state") == session.get("state"))
+    has_code = "code" in request.args
+    app.logger.info("authorized called — state_matches=%s, has_code=%s", state_matches, has_code)
+
+    if not state_matches:
+        app.logger.warning("State mismatch in authorized callback (possible CSRF).")
         return redirect(url_for("login"))
 
     if "error" in request.args:
+        app.logger.error("AAD returned an error on callback: %s", request.args.get("error_description") or request.args.get("error"))
         return render_template("auth_error.html", result=request.args)
 
-    if request.args.get("code"):
-        cache = _load_cache()
-        msal_app = _build_msal_app(cache)
+    if has_code:
+        try:
+            cache = _load_cache()
+            msal_app = _build_msal_app(cache)
 
-        result = msal_app.acquire_token_by_authorization_code(
-            request.args["code"],
-            scopes=Config.SCOPE,
-            redirect_uri=url_for("authorized", _external=True, _scheme="https"),
-        )
+            result = msal_app.acquire_token_by_authorization_code(
+                request.args["code"],
+                scopes=Config.SCOPE,
+                redirect_uri=url_for("authorized", _external=True, _scheme="https"),
+            )
 
-        if "error" in result:
-            return render_template("auth_error.html", result=result)
+            if "error" in result:
+                # Log the error details but NOT sensitive tokens
+                app.logger.error("Token acquisition failed: %s", {k: v for k, v in result.items() if k not in ("access_token", "id_token")})
+                return render_template("auth_error.html", result=result)
 
-        session["user"] = result.get("id_token_claims")
+            # Save the id token claims to session (safe to inspect)
+            session["user"] = result.get("id_token_claims", {})
 
-        # ALWAYS log in as admin for this project
-        user = User.query.filter_by(username="admin").first()
-        login_user(user)
+            # Log the successful login (name and object id)
+            user_name = session["user"].get("name") or session["user"].get("preferred_username") or "unknown"
+            user_oid = session["user"].get("oid") or session["user"].get("sub") or "unknown"
+            app.logger.info("Login successful — user_name=%s, user_oid=%s", user_name, user_oid)
 
-        _save_cache(cache)
+            # ALWAYS log in as admin for this project (Udacity requirement)
+            user = User.query.filter_by(username="admin").first()
+            login_user(user)
+
+            _save_cache(cache)
+
+        except Exception as e:
+            # Log exception details for debugging (no tokens)
+            app.logger.exception("Exception during token exchange in authorized()")
+            return render_template("auth_error.html", result={"error": "exception", "error_description": str(e)})
 
     return redirect(url_for("home"))
 
