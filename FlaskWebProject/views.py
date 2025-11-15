@@ -14,7 +14,7 @@ from FlaskWebProject.models import User, Post
 import msal
 import uuid
 
-# Enable logging
+# Enable logging for this file
 app.logger.setLevel(logging.INFO)
 
 # Blob URL
@@ -39,7 +39,7 @@ def home():
 def new_post():
     form = PostForm(request.form)
     if form.validate_on_submit():
-        image = request.files.get('image_path')
+        image = request.files.get('image_path')  # safer
         post = Post()
         post.save_changes(form, image, current_user.id, new=True)
         return redirect(url_for('home'))
@@ -65,9 +65,10 @@ def login():
 
     form = LoginForm()
 
-    # Local login
+    # Local Login
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
+
         if user is None or not user.check_password(form.password.data):
             app.logger.warning(f"Invalid login attempt for username={form.username.data}")
             flash("Invalid username or password")
@@ -81,7 +82,7 @@ def login():
             next_page = url_for('home')
         return redirect(next_page)
 
-    # Microsoft login setup
+    # Microsoft Login (MSAL)
     session["state"] = str(uuid.uuid4())
     auth_url = _build_auth_url(scopes=Config.SCOPE, state=session["state"])
 
@@ -120,6 +121,7 @@ def authorized():
             app.logger.warning(f"MS Login error: {result.get('error_description')}")
             return render_template("auth_error.html", result=result)
 
+        # Success
         session["user"] = result.get("id_token_claims", {})
         app.logger.info(f"MS Login success for {session['user'].get('name', 'Unknown User')}")
 
