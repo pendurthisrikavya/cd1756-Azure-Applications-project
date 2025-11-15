@@ -11,7 +11,7 @@ from flask_login import LoginManager
 from flask_session import Session
 from logging.handlers import RotatingFileHandler
 
-app = Flask(_name_)
+app = Flask(__name__)
 app.config.from_object(Config)
 
 # Logging
