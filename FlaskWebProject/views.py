@@ -31,6 +31,14 @@ imageSourceUrl = (
 @login_required
 def home():
     posts = Post.query.all()
+
+    # 🔥 ADD THIS LOGGING BLOCK — THIS IS WHAT SHOWS IMAGE URL IN LOG STREAM
+    for p in posts:
+        app.logger.info("IMAGE URL → %s%s",
+                        imageSourceUrl,
+                        getattr(p, 'image_path', 'NO_FILENAME'))
+    # 🔥 END LOGGING BLOCK
+
     return render_template('index.html', title='Home Page', posts=posts)
 
 
